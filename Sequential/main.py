@@ -1,5 +1,9 @@
 import numpy as np
 import time
+import cProfile
+import pstats
+import io
+import matplotlib.pyplot as plt
 from AStar import (
     find_path,
     visualize_path,
@@ -77,7 +81,7 @@ def get_position(prompt: str, grid_size: int):
             if 0 <= x < grid_size and 0 <= y < grid_size:
                 return (x, y)
             else:
-                print(f" Position must be within grid bounds (0 to {grid_size-1})")
+                print(f" Position must be within grid bounds (0 to {grid_size - 1})")
         except ValueError:
             print(" Invalid format! Please enter as: x,y (e.g., 5,10)")
 
@@ -143,7 +147,7 @@ def run_pathfinding(grid: np.ndarray, start: tuple, goal: tuple):
         # Visualize
         print("\n Displaying visualization...")
         visualize_path(grid, path, start, goal,
-                      f"A* Pathfinding: {len(path)} steps in {execution_time:.4f}s")
+                       f"A* Pathfinding: {len(path)} steps in {execution_time:.4f}s")
     else:
         print("✗ No path found!")
         print(f"  Execution time: {execution_time:.6f} seconds")
@@ -155,13 +159,13 @@ def run_pathfinding(grid: np.ndarray, start: tuple, goal: tuple):
 
 
 def run_benchmark_mode():
-    """Run benchmark mode with multiple grid sizes."""
     print("\n BENCHMARK MODE")
     print("=" * 80)
 
-    grid_sizes = [20, 50, 100, 200]
-    obstacle_density = 0.2
-    num_trials = 3
+    # Configuration
+    grid_sizes = [5, 25, 50, 100, 250, 500, 750, 1000, 2500]
+    obstacle_density = 0.34
+    num_trials = 5
 
     print(f"Testing grid sizes: {grid_sizes}")
     print(f"Obstacle density: {obstacle_density * 100}%")
@@ -169,29 +173,26 @@ def run_benchmark_mode():
 
     results = []
 
+    profiler = cProfile.Profile()
+
     for size in grid_sizes:
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"Grid Size: {size} x {size}")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
 
         trial_times = []
         successful_paths = 0
 
         for trial in range(num_trials):
-            # Create random grid
             grid = create_random_grid(size, size, obstacle_density)
-
-            # Set start and goal
-            start = (2, 2)
-            goal = (size - 3, size - 3)
-
-            # Ensure they're not obstacles
+            start, goal = (2, 2), (size - 3, size - 3)
             grid[start[0], start[1]] = 0
             grid[goal[0], goal[1]] = 0
 
-            # Run pathfinding
             start_time = time.perf_counter()
+            profiler.enable()
             path = find_path(grid, start, goal)
+            profiler.disable()
             end_time = time.perf_counter()
 
             elapsed = end_time - start_time
@@ -209,11 +210,9 @@ def run_benchmark_mode():
             'avg_time': avg_time,
             'success_rate': successful_paths / num_trials
         })
-
         print(f"\nAverage time: {avg_time:.6f} seconds")
         print(f"Success rate: {successful_paths}/{num_trials}")
 
-    # Print summary
     print("\n" + "=" * 80)
     print("BENCHMARK SUMMARY")
     print("=" * 80)
@@ -221,16 +220,22 @@ def run_benchmark_mode():
     print("-" * 80)
     for result in results:
         print(f"{result['size']}x{result['size']:<10} {result['avg_time']:<20.6f} "
-              f"{result['success_rate']*100:.1f}%")
+              f"{result['success_rate'] * 100:.1f}%")
 
     print("\n" + "=" * 80)
-    print("TIME-CONSUMING SECTIONS IDENTIFIED:")
+    print("CUMULATIVE PERFORMANCE PROFILING RESULTS")
     print("=" * 80)
-    print("1. Main A* loop - Sequential bottleneck")
-    print("2. Neighbor exploration - Can be parallelized")
-    print("3. Heuristic calculations - Can be parallelized")
-    print("4. Grid operations - Can be parallelized")
-    print("=" * 80)
+
+    s = io.StringIO()
+    ps = pstats.Stats(profiler, stream=s)
+    ps.strip_dirs()
+    ps.sort_stats('tottime')
+
+    print("Most Time-Consuming Functions:")
+    print("-" * 80)
+    ps.print_stats(15)
+    print(s.getvalue().rstrip())
+
 
 
 def main():
@@ -277,7 +282,7 @@ def main():
     elif grid_type == 2:
         density = get_obstacle_density()
         grid = create_random_grid(grid_size, grid_size, density)
-        print(f" Random grid created with {density*100:.1f}% obstacles")
+        print(f" Random grid created with {density * 100:.1f}% obstacles")
     else:
         grid = create_custom_grid(grid_size)
         print(" Custom grid created with sample walls")
@@ -289,8 +294,8 @@ def main():
     # Step 4: Get start and goal positions
     print("\nPOSITIONS")
     print("-" * 40)
-    start = get_position(f"Enter START position (x,y) [0-{grid_size-1}]: ", grid_size)
-    goal = get_position(f"Enter GOAL position (x,y) [0-{grid_size-1}]: ", grid_size)
+    start = get_position(f"Enter START position (x,y) [0-{grid_size - 1}]: ", grid_size)
+    goal = get_position(f"Enter GOAL position (x,y) [0-{grid_size - 1}]: ", grid_size)
 
     # Clear obstacles at start and goal positions (and surrounding area)
     print("\nEnsuring start and goal are accessible...")
