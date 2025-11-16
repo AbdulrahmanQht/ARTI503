@@ -1,4 +1,4 @@
-# strategy_2_bidirectional.py - FIXED EARLY TERMINATION BUG
+# strategy_2_bidirectional.py
 import multiprocessing
 import heapq
 from multiprocessing import Queue, Value
