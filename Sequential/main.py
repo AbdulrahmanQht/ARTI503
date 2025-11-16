@@ -163,7 +163,7 @@ def run_benchmark_mode():
     print("=" * 80)
 
     # Configuration
-    grid_sizes = [5, 25, 50, 100, 250, 500, 750, 1000, 2500]
+    grid_sizes = [5,10,25,50,100,250,500,750,1000]
     obstacle_density = 0.34
     num_trials = 5
 

@@ -1,15 +1,13 @@
-# Parallel/strategy_2_bidirectional.py
+# strategy_2_bidirectional.py - FIXED EARLY TERMINATION BUG
 import multiprocessing
 import heapq
-from multiprocessing import Queue, Value, Array
+from multiprocessing import Queue, Value
 import ctypes
-
+import time
+import math
 import numpy as np
-from typing import List, Tuple, Dict
-from Astar import (
-    calculate_heuristic, get_valid_neighbors,
-    create_node
-)
+from typing import List, Tuple, Dict, Optional
+from Astar import calculate_heuristic, get_valid_neighbors
 
 
 def bidirectional_worker(
@@ -22,101 +20,173 @@ def bidirectional_worker(
         stop_flag: Value
 ):
     """
-    Worker process for bidirectional search.
-    Each worker explores from its start point and reports nodes visited.
+    Worker with FIXED early termination logic.
     """
     if direction == 'fwd':
         my_start, my_goal = start, goal
     else:
         my_start, my_goal = goal, start
 
-    # Local data structures (no shared memory overhead)
-    open_list = [(0.0, my_start)]
-    g_costs = {my_start: 0.0}
-    parents = {my_start: None}
+    # Local data structures
+    open_list = []
+    g_costs = {}
+    parents = {}
     closed_set = set()
 
-    start_node = create_node(
-        position=my_start,
-        g=0,
-        h=calculate_heuristic(my_start, my_goal)
-    )
-    open_dict = {my_start: start_node}
+    # Initialize
+    start_g = 0.0
+    start_h = calculate_heuristic(my_start, my_goal)
+    heapq.heappush(open_list, (start_g + start_h, my_start))
+    g_costs[my_start] = start_g
+    parents[my_start] = None
 
-    while open_list and not stop_flag.value:
-        current_f, current_pos = heapq.heappop(open_list)
+    # Send updates less frequently
+    UPDATE_FREQUENCY = 10000  # Every 10k nodes
+    nodes_processed = 0
+    last_update = 0
+    MAX_NODES = 1000000  # Safety limit
 
-        # Skip if already processed
-        if current_pos in closed_set:
-            continue
+    try:
+        while open_list and not stop_flag.value and nodes_processed < MAX_NODES:
+            current_f, current_pos = heapq.heappop(open_list)
 
-        # Prune if we already have a better solution
-        if current_f >= best_cost.value:
-            break
-
-        if current_pos not in open_dict:
-            continue
-
-        current_node = open_dict.pop(current_pos)
-        closed_set.add(current_pos)
-
-        # Send this node to the coordinator
-        result_queue.put((direction, current_pos, current_node['g'], parents[current_pos]))
-
-        # Expand neighbors
-        for neighbor_pos in get_valid_neighbors(grid, current_pos):
-            if neighbor_pos in closed_set:
+            if current_pos in closed_set:
                 continue
 
-            tentative_g = current_node['g'] + calculate_heuristic(current_pos, neighbor_pos)
+            # FIXED: Only prune if we actually have a valid meeting point
+            # Don't terminate early based on best_cost if it's still infinity
+            current_best = best_cost.value
+            if current_best < float('inf'):
+                # We have a meeting point, can be more aggressive
+                if current_f >= current_best * 1.5:
+                    break
+            # If no meeting yet, keep searching
 
-            # Only update if this is a better path
-            if neighbor_pos not in g_costs or tentative_g < g_costs[neighbor_pos]:
-                g_costs[neighbor_pos] = tentative_g
-                parents[neighbor_pos] = current_pos
+            closed_set.add(current_pos)
+            nodes_processed += 1
 
-                h = calculate_heuristic(neighbor_pos, my_goal)
-                f = tentative_g + h
+            # Send periodic updates
+            if nodes_processed - last_update >= UPDATE_FREQUENCY:
+                # Send sample of recent nodes near middle
+                middle_x = (start[0] + goal[0]) // 2
+                middle_y = (start[1] + goal[1]) // 2
 
-                neighbor_node = create_node(
-                    position=neighbor_pos,
-                    g=tentative_g,
-                    h=h,
-                    parent=current_node
-                )
+                middle_nodes = []
+                # Sample from recent expansions
+                recent_count = min(5000, len(g_costs))
+                sample_items = list(g_costs.items())[-recent_count:]
 
-                heapq.heappush(open_list, (f, neighbor_pos))
-                open_dict[neighbor_pos] = neighbor_node
+                for pos, g in sample_items:
+                    dist_to_middle = abs(pos[0] - middle_x) + abs(pos[1] - middle_y)
+                    if dist_to_middle < max(grid.shape) // 3:
+                        middle_nodes.append((pos, g, parents[pos]))
+                        if len(middle_nodes) >= 200:
+                            break
 
-    # Signal completion
-    result_queue.put((direction, None, None, None))
+                if middle_nodes:
+                    result_queue.put(('update', direction, middle_nodes, nodes_processed))
+                last_update = nodes_processed
+
+            # Expand neighbors
+            for neighbor_pos in get_valid_neighbors(grid, current_pos):
+                if neighbor_pos in closed_set:
+                    continue
+
+                dx = abs(neighbor_pos[0] - current_pos[0])
+                dy = abs(neighbor_pos[1] - current_pos[1])
+                move_cost = 1.4142135623730951 if (dx == 1 and dy == 1) else 1.0
+
+                tentative_g = g_costs[current_pos] + move_cost
+
+                if neighbor_pos not in g_costs or tentative_g < g_costs[neighbor_pos]:
+                    g_costs[neighbor_pos] = tentative_g
+                    parents[neighbor_pos] = current_pos
+
+                    h = calculate_heuristic(neighbor_pos, my_goal)
+                    f = tentative_g + h
+
+                    # Only prune if we have a valid meeting point
+                    if current_best < float('inf'):
+                        if f >= current_best * 1.5:
+                            continue
+
+                    heapq.heappush(open_list, (f, neighbor_pos))
+
+            # Check stop flag less frequently
+            if nodes_processed % 5000 == 0 and stop_flag.value:
+                break
+
+    except Exception as e:
+        result_queue.put(('error', direction, str(e)))
+        return
+
+    # Send final complete data
+    final_data = {
+        'g_costs': dict(g_costs),
+        'parents': dict(parents),
+        'nodes_processed': nodes_processed
+    }
+
+    result_queue.put(('complete', direction, final_data))
 
 
-def strategy_2_bidirectional(grid: np.ndarray, start: Tuple[int, int],
-                             goal: Tuple[int, int]) -> List[Tuple[int, int]]:
+def find_meeting_point(
+        g_fwd: Dict[Tuple[int, int], float],
+        g_bwd: Dict[Tuple[int, int], float],
+        current_best: float
+) -> Tuple[Optional[Tuple[int, int]], float]:
+    """Find best meeting point."""
+    best_meeting = None
+    best_cost = current_best
+
+    meeting_points = g_fwd.keys() & g_bwd.keys()
+
+    for pos in meeting_points:
+        total = g_fwd[pos] + g_bwd[pos]
+        if total < best_cost:
+            best_cost = total
+            best_meeting = pos
+
+    return best_meeting, best_cost
+
+
+def strategy_2_bidirectional(
+        grid: np.ndarray,
+        start: Tuple[int, int],
+        goal: Tuple[int, int]
+) -> List[Tuple[int, int]]:
     """
-    Bidirectional A* using multiprocessing.
-    Two processes search from start and goal simultaneously.
+    Bidirectional A* with fixed early termination.
     """
-
     # Check trivial cases
     if grid[start[0], start[1]] == 1 or grid[goal[0], goal[1]] == 1:
+        print("  Start or goal is blocked!")
         return []
 
     if start == goal:
         return [start]
 
-    # Shared memory for coordination
-    result_queue = Queue()
-    best_cost = Value('d', float('inf'))  # 'd' for double
+    # Quick reachability check
+    if not get_valid_neighbors(grid, start):
+        print("  Start position has no valid neighbors!")
+        return []
+
+    if not get_valid_neighbors(grid, goal):
+        print("  Goal position has no valid neighbors!")
+        return []
+
+    # Shared memory
+    ctx = multiprocessing.get_context('spawn')
+    result_queue = ctx.Queue()
+    best_cost = Value('d', float('inf'))
     stop_flag = Value(ctypes.c_bool, False)
 
-    # Start both workers
-    p_fwd = multiprocessing.Process(
+    # Start workers
+    p_fwd = ctx.Process(
         target=bidirectional_worker,
         args=(grid, start, goal, 'fwd', result_queue, best_cost, stop_flag)
     )
-    p_bwd = multiprocessing.Process(
+    p_bwd = ctx.Process(
         target=bidirectional_worker,
         args=(grid, start, goal, 'bwd', result_queue, best_cost, stop_flag)
     )
@@ -124,82 +194,146 @@ def strategy_2_bidirectional(grid: np.ndarray, start: Tuple[int, int],
     p_fwd.start()
     p_bwd.start()
 
-    # Coordinator: collect results and detect meeting point
-    g_fwd: Dict[Tuple[int, int], float] = {}
-    g_bwd: Dict[Tuple[int, int], float] = {}
-    parents_fwd: Dict[Tuple[int, int], Tuple[int, int]] = {}
-    parents_bwd: Dict[Tuple[int, int], Tuple[int, int]] = {}
+    # Coordinator
+    g_fwd: Dict[Tuple[int, int], float] = {start: 0.0}
+    g_bwd: Dict[Tuple[int, int], float] = {goal: 0.0}
+    parents_fwd: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {start: None}
+    parents_bwd: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {goal: None}
 
-    best_meeting = None
+    best_meeting: Optional[Tuple[int, int]] = None
     completed_workers = 0
+    start_time = time.time()
+    last_print = time.time()
 
+    TIMEOUT = 60.0
+    fwd_nodes = 0
+    bwd_nodes = 0
+
+    # Main coordination loop
     while completed_workers < 2:
         try:
-            direction, pos, g_cost, parent = result_queue.get(timeout=0.1)
+            msg = result_queue.get(timeout=0.2)
 
-            # Check for completion signal
-            if pos is None:
+            if msg[0] == 'update':
+                _, direction, nodes, processed = msg
+
+                # Update progress
+                if direction == 'fwd':
+                    fwd_nodes = processed
+                else:
+                    bwd_nodes = processed
+
+                # Merge update
+                if direction == 'fwd':
+                    for pos, g, parent in nodes:
+                        if pos not in g_fwd or g < g_fwd[pos]:
+                            g_fwd[pos] = g
+                            parents_fwd[pos] = parent
+                else:
+                    for pos, g, parent in nodes:
+                        if pos not in g_bwd or g < g_bwd[pos]:
+                            g_bwd[pos] = g
+                            parents_bwd[pos] = parent
+
+                # Check for meeting
+                new_meeting, new_cost = find_meeting_point(g_fwd, g_bwd, best_cost.value)
+                if new_meeting is not None:
+                    if best_meeting is None:
+                        best_meeting = new_meeting
+                        best_cost.value = new_cost
+
+            elif msg[0] == 'complete':
+                _, direction, final_data = msg
+
+
+
+                # Merge final data
+                if direction == 'fwd':
+                    g_fwd.update(final_data['g_costs'])
+                    parents_fwd.update(final_data['parents'])
+                else:
+                    g_bwd.update(final_data['g_costs'])
+                    parents_bwd.update(final_data['parents'])
+
                 completed_workers += 1
-                continue
 
-            # Store the node info
-            if direction == 'fwd':
-                g_fwd[pos] = g_cost
-                parents_fwd[pos] = parent
+                # Final meeting check
+                new_meeting, new_cost = find_meeting_point(g_fwd, g_bwd, best_cost.value)
+                if new_meeting is not None:
+                    best_meeting = new_meeting
+                    best_cost.value = new_cost
 
-                # Check if backward search has visited this node
-                if pos in g_bwd:
-                    total_cost = g_cost + g_bwd[pos]
-                    if total_cost < best_cost.value:
-                        best_cost.value = total_cost
-                        best_meeting = pos
-
-            else:  # 'bwd'
-                g_bwd[pos] = g_cost
-                parents_bwd[pos] = parent
-
-                # Check if forward search has visited this node
-                if pos in g_fwd:
-                    total_cost = g_cost + g_fwd[pos]
-                    if total_cost < best_cost.value:
-                        best_cost.value = total_cost
-                        best_meeting = pos
+            elif msg[0] == 'error':
+                _, direction, error_msg = msg
+                print(f"  ERROR in {direction} worker: {error_msg}")
+                completed_workers += 1
 
         except:
-            # Timeout - check if processes are still alive
-            if not p_fwd.is_alive() and not p_bwd.is_alive():
+            # Timeout - print progress
+            current_time = time.time()
+            elapsed = current_time - start_time
+
+            if current_time - last_print > 3.0:
+                if best_meeting:
+                    last_print = current_time
+
+            # Timeout check
+            if elapsed > TIMEOUT:
+                print(f"  Timeout after {elapsed:.1f}s - stopping search")
+                stop_flag.value = True
                 break
 
-    # Signal workers to stop
+            # Check if both processes died
+            if not p_fwd.is_alive() and not p_bwd.is_alive():
+                print("  Both workers stopped")
+                completed_workers = 2
+
+    # Signal stop
     stop_flag.value = True
 
-    # Wait for processes to finish
-    p_fwd.join(timeout=1)
-    p_bwd.join(timeout=1)
+    # Clean up processes
+    for process, name in [(p_fwd, 'forward'), (p_bwd, 'backward')]:
+        if process.is_alive():
+            process.join(timeout=2.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=1.0)
 
-    # Terminate if still running
-    if p_fwd.is_alive():
-        p_fwd.terminate()
-    if p_bwd.is_alive():
-        p_bwd.terminate()
 
-    # Reconstruct path if meeting point found
+
+    # Reconstruct path
     if best_meeting is not None:
-        # Forward path: start → meeting_node
+
+        # Forward path
         path_fwd = []
         current = best_meeting
-        while current is not None:
+        safety = 0
+        while current is not None and safety < 1000000:
             path_fwd.append(current)
             current = parents_fwd.get(current)
+            safety += 1
+
+        if safety >= 1000000:
+            print("  ERROR: Forward path reconstruction failed (cycle detected)")
+            return []
+
         path_fwd.reverse()
 
-        # Backward path: meeting_node → goal
+        # Backward path
         path_bwd = []
-        current = parents_bwd.get(best_meeting)  # Skip meeting node itself
-        while current is not None:
+        current = parents_bwd.get(best_meeting)
+        safety = 0
+        while current is not None and safety < 1000000:
             path_bwd.append(current)
             current = parents_bwd.get(current)
+            safety += 1
 
-        return path_fwd + path_bwd
+        if safety >= 1000000:
+            print("  ERROR: Backward path reconstruction failed (cycle detected)")
+            return []
 
+        final_path = path_fwd + path_bwd
+        return final_path
+
+    print("  No path exists between start and goal")
     return []

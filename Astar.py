@@ -1,23 +1,13 @@
-# Astar_unified.py
-# This file contains all common A* functions, grid utilities, and visualization.
-# It can be run directly to test the sequential algorithm,
-# or imported by parallel scripts.
-
 from typing import List, Tuple, Dict
 import numpy as np
 import heapq
 from math import sqrt
 import matplotlib.pyplot as plt
-
-
-# ----------------------------------------------------------------------------
-# ## Core A* Data Structures & Helpers
-# (Combined from both files)
-# ----------------------------------------------------------------------------
+from math import sqrt
 
 def create_node(position: Tuple[int, int], g: float = float('inf'),
                 h: float = 0.0, parent: Dict = None) -> Dict:
-    """Creates a node dictionary for the A* algorithm."""
+    """Creates a node dictionary storing its position, costs (g, h, f), and parent."""
     return {
         'position': position,
         'g': g,
@@ -62,27 +52,23 @@ def reconstruct_path(goal_node: Dict) -> List[Tuple[int, int]]:
 
 
 def reconstruct_from_parents(parents_map: Dict, goal_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
-    """
-    Reconstructs the path from a parents dictionary.
-
-    *** THIS IS THE FIXED, SAFER VERSION ***
-    """
+    """Reconstructs the path from a parent's dictionary."""
     path = []
     current_pos = goal_pos
 
-    # Add a safety limit (e.g., grid size) to prevent infinite loops
-    # in case of a corrupted parent map.
-    grid_area = len(parents_map)  # A rough estimate
+    # Add a safety limit to prevent infinite loops
+    grid_area = len(parents_map)
     if grid_area == 0:
         return []
 
-    for _ in range(grid_area):  # Safety break
+    # Safety break
+    for _ in range(grid_area):
         path.append(current_pos)
 
         parent = parents_map.get(current_pos)
 
         if parent is None:
-            # We hit the start node (its parent is None)
+            # Start node reached
             if current_pos == path[-1]:  # Check if start is in map
                 break  # Path is complete
             else:
@@ -108,29 +94,19 @@ def reconstruct_from_parents(parents_map: Dict, goal_pos: Tuple[int, int]) -> Li
         return []
 
 
-# ----------------------------------------------------------------------------
-# ## Main Sequential A* Algorithm
-# (Using the more optimized version from Parallel/Astar.py)
-# ----------------------------------------------------------------------------
-
 def find_path(grid: np.ndarray, start: Tuple[int, int],
               goal: Tuple[int, int]) -> List[Tuple[int, int]]:
-    """
-    Finds the shortest path using the sequential A* algorithm.
-    """
+    """Finds the shortest path using the sequential A* algorithm. """
 
-    # Check for invalid grid or start/goal positions
     if grid.shape[0] == 0 or (grid[start[0], start[1]] == 1 or grid[goal[0], goal[1]] == 1):
         return []
 
-    # Initialize start node
     start_node = create_node(
         position=start,
         g=0,
         h=calculate_heuristic(start, goal)
     )
 
-    # Initialize open and closed sets
     open_list = [(start_node['f'], start)]  # Priority queue
     open_dict = {start: start_node}  # For quick node lookup by position
     closed_set = set()  # Explored nodes
@@ -157,7 +133,10 @@ def find_path(grid: np.ndarray, start: Tuple[int, int],
                 continue
 
             # Calculate new path cost
-            tentative_g = current_node['g'] + calculate_heuristic(current_pos, neighbor_pos)
+            dx = abs(neighbor_pos[0] - current_pos[0])
+            dy = abs(neighbor_pos[1] - current_pos[1])
+            move_cost = sqrt(2) if (dx == 1 and dy == 1) else 1.0
+            tentative_g = current_node['g'] + move_cost
             neighbor_node = open_dict.get(neighbor_pos)
 
             # Check if this is a new node or a better path
@@ -181,11 +160,6 @@ def find_path(grid: np.ndarray, start: Tuple[int, int],
 
     return []  # No path found
 
-
-# ----------------------------------------------------------------------------
-# ## Grid Creation Utilities
-# (From Sequential/Astar.py)
-# ----------------------------------------------------------------------------
 
 def create_empty_grid(rows: int, cols: int) -> np.ndarray:
     """Creates an empty grid of zeros."""
@@ -231,27 +205,19 @@ def print_grid_info(grid: np.ndarray):
     print(f"Obstacle Cells: {obstacle_cells} ({obstacle_percentage:.1f}%)")
 
 
-# ----------------------------------------------------------------------------
-# ## Visualization Utility
-# (From Sequential/Astar.py)
-# ----------------------------------------------------------------------------
-
 def visualize_path(grid: np.ndarray, path: List[Tuple[int, int]],
                    start: Tuple[int, int], goal: Tuple[int, int],
                    title: str = "A* Pathfinding Result"):
-    """Uses Matplotlib to draw the grid, obstacles, and path."""
+
     plt.figure(figsize=(10, 10))
-    plt.imshow(grid, cmap='binary')  # Black for obstacles (1), white for walkable (0)
+    plt.imshow(grid, cmap='binary')
 
     if path:
         path_array = np.array(path)
         plt.plot(path_array[:, 1], path_array[:, 0], 'b-', linewidth=3, label='Path')
-        plt.plot(path_array[0, 1], path_array[0, 0], 'go', markersize=15, label='Start')
-        plt.plot(path_array[-1, 1], path_array[-1, 0], 'ro', markersize=15, label='Goal')
-    else:
-        # No path found, just show start and goal
-        plt.plot(start[1], start[0], 'go', markersize=15, label='Start')
-        plt.plot(goal[1], goal[0], 'ro', markersize=15, label='Goal')
+
+    plt.plot(start[1], start[0], 'go', markersize=15, label='Start')  # 'go' = green circle
+    plt.plot(goal[1], goal[0], 'ro', markersize=15, label='Goal')  # 'ro' = red circle
 
     plt.grid(True)
     plt.legend(fontsize=12)
@@ -262,20 +228,12 @@ def visualize_path(grid: np.ndarray, path: List[Tuple[int, int]],
     plt.show()
 
 
-# ----------------------------------------------------------------------------
-# ## Main execution block
-# (This code only runs when you execute this file directly)
-# ----------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    # 1. Create a test grid
     GRID_SIZE = 50
     OBSTACLE_DENSITY = 0.3
 
     grid = create_random_grid(GRID_SIZE, GRID_SIZE, OBSTACLE_DENSITY)
 
-    # 2. Define Start and Goal
-    # Ensure start/goal are not obstacles
     start_pos = (0, 0)
     goal_pos = (GRID_SIZE - 1, GRID_SIZE - 1)
     grid[start_pos] = 0
@@ -285,20 +243,16 @@ if __name__ == "__main__":
     print_grid_info(grid)
     print(f"Start: {start_pos}, Goal: {goal_pos}")
 
-    # 3. Run the pathfinding
     import time
 
     start_time = time.time()
     path = find_path(grid, start_pos, goal_pos)
     end_time = time.time()
 
-    # 4. Print results
     if path:
         print(f"\nPath found in {end_time - start_time:.4f} seconds.")
-        # print(f"Path: {path}") # Uncomment to see the full path
     else:
         print(f"\nNo path found. Time taken: {end_time - start_time:.4f} seconds.")
 
-    # 5. Visualize the result
     visualize_path(grid, path, start_pos, goal_pos,
                    title=f"Sequential A* Test ({GRID_SIZE}x{GRID_SIZE})")

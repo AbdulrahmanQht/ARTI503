@@ -5,14 +5,14 @@
 import numpy as np
 import time
 import multiprocessing
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 import tracemalloc
 from collections import defaultdict
 
 from Astar import create_random_grid
 from Parallel.strategy_1_batch import strategy_1_parallel_batch, find_path_wrapper
 from Parallel.strategy_2_bidirectional import strategy_2_bidirectional
-from Parallel.strategy_3_region import strategy_3_region_based
+from Parallel.strategy_3_region import find_path_region_parallel
 
 
 class ParallelProfiler:
@@ -25,7 +25,7 @@ class ParallelProfiler:
 
     def profile_strategy(self, strategy_name: str, strategy_func,
                          grid: np.ndarray, start: Tuple[int, int],
-                         goal: Tuple[int, int]) -> Dict:
+                         goal: Tuple[int, int], **kwargs) -> Dict:
         """
         Profile a single parallel strategy.
 
@@ -42,7 +42,7 @@ class ParallelProfiler:
 
         # Time the execution
         start_time = time.perf_counter()
-        path = strategy_func(grid, start, goal)
+        path = strategy_func(grid, start, goal, **kwargs)
         end_time = time.perf_counter()
 
         # Get memory usage
@@ -155,8 +155,10 @@ class ParallelProfiler:
 
         # Strategy 3 (Region-Based)
         print("\n[Strategy 3: Region-Based]")
+        grid_size = grid.shape[0]
+        num_regions = min(4, grid_size // 50) if grid_size >= 50 else 2
         start_time = time.perf_counter()
-        path_reg = strategy_3_region_based(grid, start, goal)
+        path_reg = find_path_region_parallel(grid, start, goal, num_regions, num_regions)
         total_time_reg = time.perf_counter() - start_time
 
         result = {
@@ -183,7 +185,9 @@ class ParallelProfiler:
 
         return result
 
-    def analyze_scalability(self, base_size: int = 100,
+    def analyze_scalability(self,
+                            size_list: List[int] = None,
+                            base_size: int = 100,
                             max_size: int = 500,
                             step: int = 100) -> Dict:
         """
@@ -199,7 +203,7 @@ class ParallelProfiler:
 
         # Test Strategy 1: Scale by number of jobs (fixed grid size)
         print(f"\n--- Strategy 1: Batch Processing (Scaling by Job Count) ---")
-        job_counts = [10, 25, 50, 100, 200]
+        job_counts = [5, 10, 25, 50, 100, 250, 500, 750, 1000]
         batch_grid_size = 50
         batch_grid = create_random_grid(batch_grid_size, batch_grid_size, 0.2)
 
@@ -227,11 +231,17 @@ class ParallelProfiler:
             results['batch_parallel'].append((num_jobs, time_para, sum(len(p) for p in para_results)))
             results['batch_speedup'].append((num_jobs, speedup))
 
-            print(f"  Jobs: {num_jobs:3d} | Seq: {time_seq:.4f}s | Para: {time_para:.4f}s | Speedup: {speedup:.2f}x")
+            print(f"  Jobs: {num_jobs:4d} | Seq: {time_seq:.4f}s | Para: {time_para:.4f}s | Speedup: {speedup:.2f}x")
 
         # Test Strategies 2 & 3: Scale by grid size (single path)
         print(f"\n--- Strategies 2 & 3: Single Path (Scaling by Grid Size) ---")
-        sizes = range(base_size, max_size + 1, step)
+
+        if size_list:
+            sizes = size_list
+            print(f"  Testing custom grid sizes: {sizes}")
+        else:
+            sizes = range(base_size, max_size + 1, step)
+            print(f"  Testing grid sizes from {base_size} to {max_size}...")
 
         for size in sizes:
             print(f"\n  Grid Size: {size}x{size}")
@@ -249,11 +259,12 @@ class ParallelProfiler:
             print(f"    Bidirectional: {time_bi:.4f}s")
 
             # Test Strategy 3
+            num_regions = min(4, size // 50) if size >= 50 else 2
             start_time = time.perf_counter()
-            path_reg = strategy_3_region_based(grid, start, goal)
+            path_reg = find_path_region_parallel(grid, start, goal, num_regions, num_regions)
             time_reg = time.perf_counter() - start_time
             results['region_based'].append((size, time_reg, len(path_reg) if path_reg else 0))
-            print(f"    Region-Based:  {time_reg:.4f}s")
+            print(f"    Region-Based:  {time_reg:.4f}s (using {num_regions}x{num_regions} regions)")
 
         return dict(results)
 
@@ -264,7 +275,7 @@ class ParallelProfiler:
         """
         Estimates lock contention by running strategies multiple times
         and measuring variance in execution time.
-        Includes Strategy 1 (Batch) as well.
+        Includes all strategies.
         """
         print(f"\n{'=' * 80}")
         print("LOCK CONTENTION ANALYSIS")
@@ -309,10 +320,12 @@ class ParallelProfiler:
 
         # Strategy 3 (Region-Based)
         print("\n[Strategy 3: Region-Based]")
+        grid_size = grid.shape[0]
+        num_regions = min(4, grid_size // 50) if grid_size >= 50 else 2
         times_reg = []
         for i in range(num_runs):
             start_time = time.perf_counter()
-            strategy_3_region_based(grid, start, goal)
+            find_path_region_parallel(grid, start, goal, num_regions, num_regions)
             times_reg.append(time.perf_counter() - start_time)
             print(f"  Run {i + 1}: {times_reg[-1]:.4f}s")
 
@@ -370,10 +383,13 @@ class ParallelProfiler:
             grid, start, goal
         )
 
+        num_regions = min(4, grid_size // 50) if grid_size >= 50 else 2
         all_results['basic_reg'] = self.profile_strategy(
             "Strategy 3: Region-Based",
-            strategy_3_region_based,
-            grid, start, goal
+            find_path_region_parallel,
+            grid, start, goal,
+            num_regions_x=num_regions,
+            num_regions_y=num_regions
         )
 
         # 1b. Basic profiling - Batch Strategy
@@ -398,7 +414,7 @@ class ParallelProfiler:
         print(" " * 25 + "SUMMARY REPORT")
         print("=" * 80)
 
-        print("\n📊 EXECUTION TIME COMPARISON")
+        print("\nEXECUTION TIME COMPARISON")
         print("-" * 80)
         print(f"{'Strategy':<25} | {'Time (s)':<12} | {'Memory (MB)':<12} | {'Notes':<20}")
         print("-" * 80)
@@ -410,7 +426,7 @@ class ParallelProfiler:
         print(f"{'Region-Based':<25} | {results['basic_reg']['time']:<12.4f} | "
               f"{results['basic_reg']['memory_mb']:<12.2f} | Single path")
 
-        print("\n🔒 LOCK CONTENTION (Variance indicates contention)")
+        print("\nLOCK CONTENTION (Variance indicates contention)")
         print("-" * 80)
         print(f"{'Strategy':<25} | {'Avg Time (s)':<15} | {'Variance %':<12}")
         print("-" * 80)
@@ -421,36 +437,36 @@ class ParallelProfiler:
         print(f"{'Bidirectional':<25} | {bi_lock['avg']:<15.4f} | {bi_lock['variance_pct']:<12.2f}")
         print(f"{'Region-Based':<25} | {reg_lock['avg']:<15.4f} | {reg_lock['variance_pct']:<12.2f}")
 
-        print("\n💡 BOTTLENECK ANALYSIS")
+        print("\nBOTTLENECK ANALYSIS")
         print("-" * 80)
 
         # Identify bottlenecks
         if batch_lock['variance_pct'] > 10:
-            print("  ⚠️  Batch Processing: HIGH lock contention detected (>10% variance)")
+            print("  -  Batch Processing: HIGH lock contention detected (>10% variance)")
         else:
             print("  ✓  Batch Processing: Low lock contention (embarrassingly parallel)")
 
         if bi_lock['variance_pct'] > 10:
-            print("  ⚠️  Bidirectional: HIGH lock contention detected (>10% variance)")
+            print("  -  Bidirectional: HIGH lock contention detected (>10% variance)")
         else:
             print("  ✓  Bidirectional: Low lock contention")
 
         if reg_lock['variance_pct'] > 10:
-            print("  ⚠️  Region-Based: HIGH lock contention detected (>10% variance)")
+            print("  -  Region-Based: HIGH lock contention detected (>10% variance)")
         else:
             print("  ✓  Region-Based: Low lock contention")
 
         # Memory analysis
         if results['basic_batch']['para_memory_mb'] > 100:
-            print(f"  ⚠️  Batch: High memory usage ({results['basic_batch']['para_memory_mb']:.1f} MB)")
+            print(f"  ⚠  Batch: High memory usage ({results['basic_batch']['para_memory_mb']:.1f} MB)")
 
         if results['basic_bi']['memory_mb'] > 100:
-            print(f"  ⚠️  Bidirectional: High memory usage ({results['basic_bi']['memory_mb']:.1f} MB)")
+            print(f"  ⚠  Bidirectional: High memory usage ({results['basic_bi']['memory_mb']:.1f} MB)")
 
         if results['basic_reg']['memory_mb'] > 100:
-            print(f"  ⚠️  Region-Based: High memory usage ({results['basic_reg']['memory_mb']:.1f} MB)")
+            print(f"  ⚠  Region-Based: High memory usage ({results['basic_reg']['memory_mb']:.1f} MB)")
 
-        print("\n📝 RECOMMENDATIONS")
+        print("\nRECOMMENDATIONS")
         print("-" * 80)
 
         # Strategy-specific recommendations
@@ -458,21 +474,21 @@ class ParallelProfiler:
             print(f"  ✓ Strategy 1 (Batch) achieves good speedup ({results['basic_batch']['speedup']:.2f}x)")
             print("    → Best for processing multiple independent paths")
         else:
-            print("  ⚠️  Strategy 1 (Batch) shows limited speedup")
+            print("  ⚠ Strategy 1 (Batch) shows limited speedup")
             print("    → Increase number of jobs or job complexity")
 
         if results['basic_bi']['time'] > 1.0 or results['basic_reg']['time'] > 1.0:
-            print("  ⚠️  Single-path strategies: IPC overhead dominates")
-            print("    → These strategies struggle with Python's multiprocessing overhead")
-            print("    → Consider C++ implementation or use batch processing instead")
+            print("  ⚠ Single-path strategies: IPC overhead dominates for small grids")
+            print("    → Python's multiprocessing overhead is significant")
+            print("    → Best performance on large grids (>500x500)")
 
         if bi_lock['variance_pct'] > 10 or reg_lock['variance_pct'] > 10:
-            print("  • Reduce lock granularity or use lock-free data structures")
-            print("  • Consider batching updates to shared state")
+            print("  ⚠ Reduce lock granularity or use lock-free data structures")
+            print("    → Consider batching updates to shared state")
 
         if results['basic_bi']['memory_mb'] > 50 or results['basic_reg']['memory_mb'] > 50:
-            print("  • High memory usage due to Manager() overhead")
-            print("  • Consider using shared memory arrays for grid data")
+            print("  ⚠ High memory usage due to Manager() overhead")
+            print("    → Consider using shared memory arrays for grid data")
 
         print("=" * 80)
 
@@ -504,13 +520,18 @@ def run_parallel_profile_mode():
         grid[goal[0], goal[1]] = 0
 
         # Profile all strategies
-        profiler.profile_batch_strategy(num_jobs=50, grid_size=50)
+        profiler.profile_batch_strategy(num_jobs=10, grid_size=50)
         profiler.profile_strategy("Bidirectional", strategy_2_bidirectional, grid, start, goal)
-        profiler.profile_strategy("Region-Based", strategy_3_region_based, grid, start, goal)
+
+        num_regions = min(4, grid_size // 50) if grid_size >= 50 else 2
+        profiler.profile_strategy("Region-Based", find_path_region_parallel, grid, start, goal,
+                                  num_regions_x=num_regions, num_regions_y=num_regions)
 
     elif choice == '3':
-        results = profiler.analyze_scalability(base_size=100, max_size=400, step=100)
-        print("\n📈 SCALABILITY RESULTS:")
+        custom_sizes = [5, 10, 25, 50, 100, 250, 500, 750, 1000]
+        results = profiler.analyze_scalability(size_list=custom_sizes)
+
+        print("\nSCALABILITY RESULTS:")
         print("-" * 80)
 
         # Batch results
