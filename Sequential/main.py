@@ -3,8 +3,7 @@ import time
 import pstats
 import cProfile
 import numpy as np
-import matplotlib.pyplot as plt
-from Astar import (
+from Sequential.Astar import (
     add_wall,
     find_path,
     visualize_path,

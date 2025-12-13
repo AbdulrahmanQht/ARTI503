@@ -3,27 +3,21 @@ import time
 import cProfile
 import pstats
 import io
-import matplotlib.pyplot as plt
 import multiprocessing
-
-# 1. IMPORT Astar UTILITIES
-from Astar import (
-    find_path,
+from Sequential.Astar import (
     visualize_path,
     create_empty_grid,
     create_random_grid,
     add_wall,
-    print_grid_info
+    print_grid_info,
+    find_path  # Import sequential baseline
 )
-
-# 2. IMPORT YOUR PARALLEL STRATEGIES
-from Parallel.strategy_1_batch import strategy_1_parallel_batch
-from Parallel.strategy_2_bidirectional import strategy_2_bidirectional
-from Parallel.strategy_3_region import find_path_region_parallel
+from Parallel.strategy_1_batch import batch_process_paths
+from Parallel.strategy_2_bidirectional import run_bidirectional_parallel
+from Parallel.strategy_3_region import run_region_parallel
 
 
-# 3. HELPER FUNCTIONS (Unchanged)
-
+# HELPER FUNCTIONS
 def print_header():
     print("=" * 80)
     print(" " * 20 + "A* PATHFINDING ALGORITHM")
@@ -33,28 +27,25 @@ def print_header():
 
 
 def get_grid_size():
-    """Get grid size from user."""
     print("\n GRID SIZE")
     print("-" * 40)
     while True:
         try:
             size = int(input("Enter grid size (e.g., 20 for 20x20 grid): "))
-            if size > 1 and size <= 3000:
+            if size > 1 and size <= 5000:  # Increased limit for parallel testing
                 return size
             else:
-                print(" Please enter a number > 1 and <= 3000")
+                print(" Please enter a number > 1 and <= 5000")
         except ValueError:
             print(" Invalid input! Please enter a number.")
 
 
 def get_grid_type():
-    """Get grid type from user."""
     print("\n GRID TYPE")
     print("-" * 40)
     print("1. Empty grid (no obstacles)")
     print("2. Random obstacles")
     print("3. Custom grid with walls")
-
     while True:
         try:
             choice = int(input("Select grid type (1-3): "))
@@ -67,7 +58,6 @@ def get_grid_type():
 
 
 def get_obstacle_density():
-    """Get obstacle density from user."""
     print("\n OBSTACLE DENSITY")
     print("-" * 40)
     while True:
@@ -82,12 +72,10 @@ def get_obstacle_density():
 
 
 def get_position(prompt: str, grid_size: int):
-    """Get a position from user."""
     while True:
         try:
             pos_input = input(prompt)
             x, y = map(int, pos_input.split(','))
-
             if 0 <= x < grid_size and 0 <= y < grid_size:
                 return (x, y)
             else:
@@ -97,7 +85,6 @@ def get_position(prompt: str, grid_size: int):
 
 
 def create_custom_grid(size: int):
-    """Create a custom grid with walls."""
     grid = create_empty_grid(size, size)
     print("\n CUSTOM WALLS")
     print("-" * 40)
@@ -109,15 +96,12 @@ def create_custom_grid(size: int):
     return grid
 
 
-# 4. MODIFIED FUNCTIONS FOR PARALLEL STRATEGIES
-
 def get_strategy_choice():
-    """Asks the user to select a parallel strategy for Interactive Mode."""
     print("\nCHOOSE PARALLEL STRATEGY")
     print("-" * 40)
     print("1. Strategy 1: Batch Processing (Task-Parallel)")
-    print("2. Strategy 2: Bidirectional A* (Message-Passing)")
-    print("3. Strategy 3: Region-Based A* (Hierarchical Parallel)")
+    print("2. Strategy 2: Bidirectional A* (Shared Memory/Hybrid)")
+    print("3. Strategy 3: Region-Based A* (Decomposition)")
 
     while True:
         try:
@@ -131,7 +115,6 @@ def get_strategy_choice():
 
 
 def get_benchmark_choice():
-    """Asks the user to select a benchmark mode."""
     print("\nCHOOSE BENCHMARK MODE")
     print("-" * 40)
     print("1. Benchmark Strategy 1: Batch Processing")
@@ -168,319 +151,189 @@ def run_parallel_pathfinding(grid: np.ndarray, start: tuple, goal: tuple, strate
 
     path = []
     if strategy == 1:
+        print(" (Note: Batch Strategy is optimized for multiple paths, overhead will be high for just 1)")
         jobs = [(grid, start, goal)]
-        results = strategy_1_parallel_batch(jobs)
+        results = batch_process_paths(jobs)  # UPDATED CALL
         path = results[0] if results else []
     elif strategy == 2:
-        path = strategy_2_bidirectional(grid, start, goal)
+        path = run_bidirectional_parallel(grid, start, goal)  # UPDATED CALL
     elif strategy == 3:
-        # Use the new efficient region-based implementation
-        num_regions_x = 4
-        num_regions_y = 4
-        path = find_path_region_parallel(grid, start, goal, num_regions_x, num_regions_y)
+        # Use simple heuristic for splits based on grid size
+        splits = max(2, grid.shape[0] // 50)
+        path = run_region_parallel(grid, start, goal, splits=splits)  # UPDATED CALL
 
     end_time = time.perf_counter()
     execution_time = end_time - start_time
 
-    # Display results
     print("\n RESULTS:")
     print("-" * 40)
-
     if path:
         print(f" Path found!")
         print(f"  Path length: {len(path)} steps")
         print(f"  Execution time: {execution_time:.6f} seconds")
         print(f"  Start position: {start}")
         print(f"  Goal position: {goal}")
-        print(f"\n  First 5 steps: {path[:5]}")
-        if len(path) > 5:
-            print(f"  Last 5 steps: {path[-5:]}")
 
-        # Visualize
         print("\n Displaying visualization...")
         title = f"{strategy_name}\n{len(path)} steps in {execution_time:.4f}s"
         visualize_path(grid, path, start, goal, title)
     else:
-        print("✗ No path found!")
+        print("x No path found!")
         print(f"  Execution time: {execution_time:.6f} seconds")
         visualize_path(grid, path, start, goal, f"{strategy_name}: No path found")
 
 
 def run_comparison_benchmark():
-    """
-    Runs a benchmark on *all three* parallel strategies
-    over multiple grid sizes and prints a comparison table,
-    including success rates and profiler output.
-    """
-    strategy_funcs = {
-        1: strategy_1_parallel_batch,
-        2: strategy_2_bidirectional,
-        3: find_path_region_parallel
-    }
-    strategy_names = {
-        1: "Strategy 1: Batch",
-        2: "Strategy 2: Bidirectional",
-        3: "Strategy 3: Region-Based"
-    }
-
     print("\n BENCHMARK MODE: COMPARING ALL PARALLEL STRATEGIES")
     print("=" * 80)
 
-    # --- 1. CONFIGURE BENCHMARK ---
-    grid_sizes = [5, 10, 25, 50, 100, 250, 500, 750, 1000]
+    # --- CONFIGURE BENCHMARK ---
+    grid_sizes = [50, 100, 250, 500,1000,2500,5000]
     obstacle_density = 0.34
-    num_trials = 5
+    num_trials = 3
 
     print(f"Testing grid sizes: {grid_sizes}")
     print(f"Obstacle density: {obstacle_density * 100}%")
     print(f"Trials per size: {num_trials}\n")
 
-    # Store full results: {size: {strategy_id: {'avg_time': X, 'success_rate': Y}}}
     benchmark_results = {size: {} for size in grid_sizes}
 
-    # --- Create profiler ---
-    profiler = cProfile.Profile()
-
-    # --- 2. RUN BENCHMARK LOOP ---
-    print("Running benchmark trials...")
-    profiler.enable()
-
+    # --- RUN BENCHMARK LOOP ---
     for size in grid_sizes:
         print(f"\n{'=' * 80}")
         print(f"Grid Size: {size} x {size}")
         print(f"{'=' * 80}")
 
-        for strategy_id in range(1, 4):
-            strategy_func = strategy_funcs[strategy_id]
-            strategy_name = strategy_names[strategy_id]
+        strategies = [
+            (1, "Batch Processing", batch_process_paths),
+            (2, "Bidirectional", run_bidirectional_parallel),
+            (3, "Region-Based", run_region_parallel)
+        ]
 
-            print(f"\n--- Testing: {strategy_name} ---")
+        for strat_id, strat_name, strat_func in strategies:
+            print(f"\n--- Testing: {strat_name} ---")
 
             trial_times = []
             successful_paths = 0
 
             for trial in range(num_trials):
                 grid = create_random_grid(size, size, obstacle_density)
-
-                start_x = min(2, size - 1)
-                start_y = min(2, size - 1)
-                goal_x = max(0, min(size - 3, size - 1))
-                goal_y = max(0, min(size - 3, size - 1))
-                start, goal = (start_x, start_y), (goal_x, goal_y)
-
-                grid[start[0], start[1]] = 0
-                grid[goal[0], goal[1]] = 0
+                s, g = (0, 0), (size - 1, size - 1)
+                grid[s], grid[g] = 0, 0  # Ensure clear
 
                 start_time = time.perf_counter()
 
                 path = []
-                if strategy_id == 1:
-                    jobs = [(grid, start, goal)]
-                    results_list = strategy_func(jobs)
-                    path = results_list[0] if results_list else []
-                elif strategy_id == 3:
-                    # Region-based with appropriate parameters
-                    num_regions = min(4, size // 50) if size >= 50 else 2
-                    path = strategy_func(grid, start, goal, num_regions, num_regions)
-                else:
-                    path = strategy_func(grid, start, goal)
+                try:
+                    if strat_id == 1:
+                        # Testing single path latency
+                        jobs = [(grid, s, g)]
+                        res = strat_func(jobs)
+                        path = res[0] if res else []
+                    elif strat_id == 3:
+                        splits = max(2, size // 100)
+                        path = strat_func(grid, s, g, splits=splits)
+                    else:
+                        path = strat_func(grid, s, g)
+                except Exception as e:
+                    print(f"Error: {e}")
 
-                end_time = time.perf_counter()
-                elapsed = end_time - start_time
+                elapsed = time.perf_counter() - start_time
                 trial_times.append(elapsed)
 
                 if path:
                     successful_paths += 1
-                    print(f"Trial {trial + 1}: {elapsed:.6f}s | Path: {len(path)} steps ")
+                    print(f"Trial {trial + 1}: {elapsed:.4f}s | Path: {len(path)}")
                 else:
-                    print(f"Trial {trial + 1}: {elapsed:.6f}s | No path found ✗")
+                    print(f"Trial {trial + 1}: {elapsed:.4f}s | No path")
 
             avg_time = np.mean(trial_times)
             success_rate = successful_paths / num_trials
 
-            print(f"\nAverage time: {avg_time:.6f} seconds")
-            print(f"Success rate: {successful_paths}/{num_trials}")
-
-            # Store results
-            benchmark_results[size][strategy_id] = {
+            benchmark_results[size][strat_id] = {
+                'name': strat_name,
                 'avg_time': avg_time,
                 'success_rate': success_rate
             }
 
-    profiler.disable()
-    print("\nBenchmark trials complete.")
-
-    # --- 3. PRINT FINAL SUMMARY ---
     print("\n" + "=" * 80)
     print(f"FINAL BENCHMARK SUMMARY")
     print("=" * 80)
 
-    header = f"{'Grid Size':<12} | {'Strategy':<25} | {'Avg Time (s)':<20} | {'Success Rate':<15}"
-    print(header)
-    print("-" * len(header))
+    print(f"{'Grid Size':<10} | {'Strategy':<20} | {'Avg Time (s)':<15} | {'Success':<10}")
+    print("-" * 65)
 
     for size in grid_sizes:
-        for strategy_id in range(1, 4):
-            strategy_name = strategy_names[strategy_id]
-            results = benchmark_results[size].get(strategy_id, {'avg_time': 0.0, 'success_rate': 0.0})
-
-            avg_time = results['avg_time']
-            success_rate_pct = results['success_rate'] * 100
-
-            print(f"{size}x{size:<7} | {strategy_name:<25} | {avg_time:<20.6f} | {success_rate_pct:<14.1f}%")
-
-        print("-" * len(header))
-
-    # --- 4. PRINT PROFILER RESULTS ---
-    print("\n" + "=" * 80)
-    print("CUMULATIVE PERFORMANCE PROFILING RESULTS (Main Process)")
-    print("=" * 80)
-    print("Note: Profiler only shows time spent in the main process,")
-    print("      not time spent waiting for worker processes.")
-    print("-" * 80)
-
-    s = io.StringIO()
-    ps = pstats.Stats(profiler, stream=s).sort_stats('tottime')
-
-    print("Most Time-Consuming Functions (in main process):")
-    print("-" * 80)
-    ps.print_stats(15)
-    print(s.getvalue().rstrip())
+        for strat_id in [1, 2, 3]:
+            res = benchmark_results[size][strat_id]
+            print(f"{size:<10} | {res['name']:<20} | {res['avg_time']:<15.4f} | {res['success_rate'] * 100:.0f}%")
 
 
 def run_benchmark_mode():
-    """
-    Asks the user which benchmark to run, then executes it.
-    """
-
-    # --- 1. CHOOSE STRATEGY ---
+    """Asks the user which benchmark to run, then executes it."""
     benchmark_choice = get_benchmark_choice()
 
     if benchmark_choice == 4:
         run_comparison_benchmark()
         return
 
-    # --- Logic for single-strategy benchmark (choices 1, 2, or 3) ---
-    strategy_choice = benchmark_choice
-    strategy_funcs = {
-        1: strategy_1_parallel_batch,
-        2: strategy_2_bidirectional,
-        3: find_path_region_parallel
-    }
-    strategy_names = {
-        1: "Strategy 1: Batch Processing",
-        2: "Strategy 2: Bidirectional A*",
-        3: "Strategy 3: Region-Based A*"
+    # Map choice to function and name
+    config = {
+        1: (batch_process_paths, "Batch Processing"),
+        2: (run_bidirectional_parallel, "Bidirectional A*"),
+        3: (run_region_parallel, "Region-Based A*")
     }
 
-    strategy_func = strategy_funcs[strategy_choice]
-    strategy_name = strategy_names[strategy_choice]
+    strategy_func, strategy_name = config[benchmark_choice]
 
     print(f"\n BENCHMARK MODE: {strategy_name.upper()}")
     print("=" * 80)
 
-    # --- 2. CONFIGURE BENCHMARK ---
-    grid_sizes = [5, 10, 25, 50, 100, 250, 500, 750, 1000]
-    obstacle_density = 0.34
-    num_trials = 5
-
-    print(f"Testing grid sizes: {grid_sizes}")
-    print(f"Obstacle density: {obstacle_density * 100}%")
-    print(f"Trials per size: {num_trials}\n")
-
+    grid_sizes = [50, 100, 250, 500, 1000]
+    num_trials = 3
     results = []
-    profiler = cProfile.Profile()
 
-    # --- 3. RUN BENCHMARK LOOP ---
     for size in grid_sizes:
-        print(f"\n{'=' * 80}")
-        print(f"Grid Size: {size} x {size}")
-        print(f"{'=' * 80}")
+        print(f"\nTesting Grid Size: {size}x{size}")
+        times = []
+        success = 0
 
-        trial_times = []
-        successful_paths = 0
+        for i in range(num_trials):
+            grid = create_random_grid(size, size, 0.3)
+            s, g = (0, 0), (size - 1, size - 1)
+            grid[s], grid[g] = 0, 0
 
-        for trial in range(num_trials):
-            grid = create_random_grid(size, size, obstacle_density)
-
-            start_x = min(2, size - 1)
-            start_y = min(2, size - 1)
-            goal_x = min(size - 3, size - 1)
-            goal_y = min(size - 3, size - 1)
-            if goal_x < 0: goal_x = size - 1
-            if goal_y < 0: goal_y = size - 1
-            start, goal = (start_x, start_y), (goal_x, goal_y)
-
-            grid[start[0], start[1]] = 0
-            grid[goal[0], goal[1]] = 0
-
-            start_time = time.perf_counter()
-            profiler.enable()
-
+            t0 = time.perf_counter()
             path = []
-            if strategy_choice == 1:
-                jobs = [(grid, start, goal)]
-                results_list = strategy_func(jobs)
-                path = results_list[0] if results_list else []
-            elif strategy_choice == 3:
-                # Region-based with appropriate parameters
-                num_regions = min(4, size // 50) if size >= 50 else 2
-                path = strategy_func(grid, start, goal, num_regions, num_regions)
+            if benchmark_choice == 1:
+                # Batch of 10 for better profiling
+                jobs = [(grid, s, g) for _ in range(10)]
+                res = strategy_func(jobs)
+                path = res[0] if res else []
+            elif benchmark_choice == 3:
+                path = strategy_func(grid, s, g, splits=max(2, size // 100))
             else:
-                path = strategy_func(grid, start, goal)
+                path = strategy_func(grid, s, g)
+            t1 = time.perf_counter()
 
-            profiler.disable()
-            end_time = time.perf_counter()
+            times.append(t1 - t0)
+            if path: success += 1
+            print(f" Trial {i + 1}: {t1 - t0:.4f}s")
 
-            elapsed = end_time - start_time
-            trial_times.append(elapsed)
-
-            if path:
-                successful_paths += 1
-                print(f"Trial {trial + 1}: {elapsed:.6f}s | Path: {len(path)} steps ")
-            else:
-                print(f"Trial {trial + 1}: {elapsed:.6f}s | No path found ✗")
-
-        avg_time = np.mean(trial_times)
         results.append({
             'size': size,
-            'avg_time': avg_time,
-            'success_rate': successful_paths / num_trials
+            'avg': np.mean(times),
+            'success': success / num_trials
         })
-        print(f"\nAverage time: {avg_time:.6f} seconds")
-        print(f"Success rate: {successful_paths}/{num_trials}")
 
-    # --- 4. PRINT SUMMARY ---
-    print("\n" + "=" * 80)
-    print(f"BENCHMARK SUMMARY ({strategy_name})")
-    print("=" * 80)
-    print(f"{'Grid Size':<15} {'Avg Time (s)':<20} {'Success Rate':<15}")
-    print("-" * 80)
-    for result in results:
-        print(f"{result['size']}x{result['size']:<10} {result['avg_time']:<20.6f} "
-              f"{result['success_rate'] * 100:.1f}%")
+    print("\nSUMMARY")
+    print(f"{'Size':<10} {'Avg Time':<15} {'Success':<10}")
+    for r in results:
+        print(f"{r['size']:<10} {r['avg']:<15.4f} {r['success'] * 100:.0f}%")
 
-    # --- 5. PRINT PROFILER ---
-    print("\n" + "=" * 80)
-    print("CUMULATIVE PERFORMANCE PROFILING RESULTS")
-    print("=" * 80)
-
-    s = io.StringIO()
-    ps = pstats.Stats(profiler, stream=s)
-    ps.strip_dirs()
-    ps.sort_stats('tottime')
-
-    print("Most Time-Consuming Functions (in main process):")
-    print("-" * 80)
-    ps.print_stats(15)
-    print(s.getvalue().rstrip())
-
-
-# 5. MAIN FUNCTION
 
 def main():
     print_header()
-
     print("\n SELECT MODE")
     print("-" * 40)
     print("1. Interactive Mode (Visualize a single path)")
@@ -491,16 +344,13 @@ def main():
             mode = int(input("\nSelect mode (1-2): "))
             if mode in [1, 2]:
                 break
-            else:
-                print("Please enter 1 or 2")
         except ValueError:
-            print("Invalid input! Please enter a number.")
+            pass
 
     if mode == 2:
         run_benchmark_mode()
         return
 
-    # --- Interactive Mode ---
     print("\n" + "=" * 80)
     print("INTERACTIVE MODE - PARALLEL PATHFINDING")
     print("=" * 80)
@@ -508,8 +358,6 @@ def main():
     grid_size = get_grid_size()
     grid_type = get_grid_type()
 
-    print("\nCREATING GRID...")
-    print("-" * 40)
     if grid_type == 1:
         grid = create_empty_grid(grid_size, grid_size)
     elif grid_type == 2:
@@ -517,38 +365,15 @@ def main():
         grid = create_random_grid(grid_size, grid_size, density)
     else:
         grid = create_custom_grid(grid_size)
-    print()
-    print_grid_info(grid)
 
-    print("\nPOSITIONS")
-    print("-" * 40)
-    start = get_position(f"Enter START position (x,y) [0-{grid_size - 1}]: ", grid_size)
-    goal = get_position(f"Enter GOAL position (x,y) [0-{grid_size - 1}]: ", grid_size)
+    start = get_position(f"Enter START (0-{grid_size - 1}): ", grid_size)
+    goal = get_position(f"Enter GOAL (0-{grid_size - 1}): ", grid_size)
 
-    print("\nEnsuring start and goal are accessible...")
-    grid[start[0], start[1]] = 0
-    grid[goal[0], goal[1]] = 0
-
-    for dx in range(-1, 2):
-        for dy in range(-1, 2):
-            for pos in [start, goal]:
-                nx, ny = pos[0] + dx, pos[1] + dy
-                if 0 <= nx < grid_size and 0 <= ny < grid_size:
-                    grid[nx, ny] = 0
-    print("Start and goal positions cleared")
-    print(f"\nStart: {start}")
-    print(f"Goal: {goal}")
+    # Clean start/goal
+    grid[start], grid[goal] = 0, 0
 
     strategy_choice = get_strategy_choice()
     run_parallel_pathfinding(grid, start, goal, strategy_choice)
-
-    print("\n" + "=" * 80)
-    retry = input("Would you like to try another configuration? (y/n): ")
-    if retry.lower() == 'y':
-        main()
-    else:
-        print("\n Thank you for using A* Pathfinding Algorithm!")
-        print("=" * 80)
 
 
 if __name__ == "__main__":

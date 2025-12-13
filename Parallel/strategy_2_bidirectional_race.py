@@ -2,10 +2,9 @@
 import multiprocessing
 import heapq
 import time
-import math
 import numpy as np
 from typing import List, Tuple, Dict, Optional
-from Astar import calculate_heuristic, get_valid_neighbors
+from Sequential.Astar import calculate_heuristic, get_valid_neighbors
 
 # === RACE CONDITION VARIABLES ===
 best_cost = float('inf')       # normal float, read/write without lock
