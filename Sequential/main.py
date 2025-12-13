@@ -1,16 +1,16 @@
-import numpy as np
-import time
-import cProfile
-import pstats
 import io
+import time
+import pstats
+import cProfile
+import numpy as np
 import matplotlib.pyplot as plt
 from Astar import (
+    add_wall,
     find_path,
     visualize_path,
+    print_grid_info,
     create_empty_grid,
     create_random_grid,
-    add_wall,
-    print_grid_info
 )
 
 
