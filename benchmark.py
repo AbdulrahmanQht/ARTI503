@@ -15,11 +15,12 @@ BATCH_SIZE = 32  # For Strategy 1: Simulate 32 concurrent users
 
 
 def create_random_grid(size, density):
+    # Optimization: Use int8 to save memory on large grids
     return (np.random.random((size, size)) < density).astype(np.int8)
 
 
 def run_benchmark():
-    WIDTH = 120
+    WIDTH = 130  # Increased width for the new column
 
     print("=" * WIDTH)
     print(f"{'COMPREHENSIVE A* BENCHMARK':^{WIDTH}}")
@@ -29,7 +30,7 @@ def run_benchmark():
     results = {}
 
     strategies = {
-        "Sequential": "baseline",
+        "Sequential": find_path,
         "Strategy 1: Batch": "batch_mode",
         "Strategy 2: Bidirectional": run_bidirectional_parallel,
         "Strategy 3: Region-Based": run_region_parallel,
@@ -56,6 +57,7 @@ def run_benchmark():
             print(f"--- Testing: {name} ---")
 
             times = []
+            steps_list = []  # Store path lengths
             success_count = 0
 
             for t in range(NUM_TRIALS):
@@ -64,7 +66,9 @@ def run_benchmark():
                 # --- STRATEGY 1: BATCH PROCESSING ---
                 if name == "Strategy 1: Batch":
                     batch_jobs = []
-                    for _ in range(BATCH_SIZE):
+                    current_batch = BATCH_SIZE if size < 2500 else 4
+
+                    for _ in range(current_batch):
                         s_r = (np.random.randint(0, size), np.random.randint(0, size))
                         g_r = (np.random.randint(0, size), np.random.randint(0, size))
                         grid_copy = grid.copy()
@@ -72,24 +76,26 @@ def run_benchmark():
                         batch_jobs.append((grid_copy, s_r, g_r))
 
                     t0 = time.time()
-                    batch_results = batch_process_paths(batch_jobs)  # Capture results
+                    batch_results = batch_process_paths(batch_jobs)
                     t1 = time.time()
 
                     total_batch_time = t1 - t0
-                    avg_time_per_path = total_batch_time / BATCH_SIZE
+                    avg_time_per_path = total_batch_time / current_batch
                     times.append(avg_time_per_path)
 
-                    # Check if batch succeeded (list is not empty)
+                    # Calculate average steps for this batch
                     if batch_results:
+                        # batch_results is a list of paths (lists)
+                        avg_batch_steps = np.mean([len(p) for p in batch_results if p])
+                        steps_list.append(avg_batch_steps)
                         success_count += 1
                         symbol = "✓"
                     else:
+                        steps_list.append(0)
                         symbol = "✗"
 
-                    print(f"  Trial {t + 1}: {BATCH_SIZE} Paths solved in {total_batch_time:.4f}s "
+                    print(f"  Trial {t + 1}: {current_batch} Paths solved in {total_batch_time:.4f}s "
                           f"| Avg/Path: {avg_time_per_path:.5f}s Path Found:{symbol}")
-
-
 
                 # --- STRATEGY 3: REGION ---
                 elif name == "Strategy 3: Region-Based":
@@ -101,14 +107,16 @@ def run_benchmark():
                     times.append(t1 - t0)
 
                     if path:
+                        steps_list.append(len(path))
                         success_count += 1
                         symbol = "✓"
                     else:
+                        steps_list.append(0)
                         symbol = "✗"
 
                     print(f"  Trial {t + 1}: {t1 - t0:.5f}s (Splits: {splits}) Path Found:{symbol}")
 
-                # --- STRATEGY 2: BIDIRECTIONAL ---
+                # --- STRATEGY 2 & SEQUENTIAL ---
                 else:
                     t0 = time.time()
                     path = func(grid, start, goal)
@@ -116,30 +124,35 @@ def run_benchmark():
                     times.append(t1 - t0)
 
                     if path:
+                        steps_list.append(len(path))
                         success_count += 1
                         symbol = "✓"
                     else:
+                        steps_list.append(0)
                         symbol = "✗"
 
                     print(f"  Trial {t + 1}: {t1 - t0:.5f}s Path Found:{symbol}")
 
             results[size][name] = {
                 'mean': np.mean(times),
+                'mean_steps': np.mean(steps_list) if steps_list else 0,
                 'success': (success_count / NUM_TRIALS) * 100
             }
 
     # ================= REPORT GENERATION =================
-    print("\n" + "=" * 120)
-    print(f"{'FINAL BENCHMARK REPORT':^120}")
-    print("=" * 120)
-    print(f"{'Grid':<10} | {'Strategy':<30} | {'Time/Path (Avg)':<18} | {'Speedup':<10} | {'Efficiency':<10}")
-    print("-" * 120)
+    print("\n" + "=" * 130)
+    print(f"{'FINAL BENCHMARK REPORT':^130}")
+    print("=" * 130)
+    # Added "Avg Steps" column
+    print(f"{'Grid':<10} | {'Strategy':<30} | {'Time/Path':<15} | {'Speedup':<10} | {'Efficiency':<12} | {'Avg Steps':<10}")
+    print("-" * 130)
 
     for size in GRID_SIZES:
         baseline = results[size]["Sequential"]['mean']
+        baseline_steps = results[size]["Sequential"]['mean_steps']
 
         # 1. Print Baseline
-        print(f"{size:<10} | {'Sequential (Baseline)':<30} | {baseline:.5f}s         | {'1.00x':<10} | {'-':<10}")
+        print(f"{size:<10} | {'Sequential (Baseline)':<30} | {baseline:.5f}s      | {'1.00x':<10} | {'-':<12} | {baseline_steps:.1f}")
 
         # 2. Print Others
         for name in strategies.keys():
@@ -149,9 +162,9 @@ def run_benchmark():
             speedup = baseline / res['mean'] if res['mean'] > 0 else 0
             eff = (speedup / NUM_CORES) * 100
 
-            print(f"{'':<10} | {name:<30} | {res['mean']:.5f}s         | {speedup:<9.2f}x | {eff:<9.1f}%")
+            print(f"{'':<10} | {name:<30} | {res['mean']:.5f}s      | {speedup:<9.2f}x | {eff:<9.1f}%   | {res['mean_steps']:.1f}")
 
-        print("-" * 120)
+        print("-" * 130)
 
     print("\nNOTE: For 'Batch Processing', Speedup is calculated based on throughput.")
     print(f"      (Sequential Time per Path vs. Parallel Batch Time per Path)")
