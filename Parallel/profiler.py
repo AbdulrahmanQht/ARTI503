@@ -405,15 +405,99 @@ class ParallelProfiler:
         print("=" * 80)
 
 
+import numpy as np
+import time
+import multiprocessing
+import matplotlib.pyplot as plt
+from Sequential.Astar import create_random_grid
+from Parallel.strategy_1_batch import batch_process_paths
+from Parallel.strategy_2_bidirectional import run_bidirectional_parallel
+from Parallel.strategy_3_region import run_region_parallel
+
+
+def benchmark_parallel_scaling():
+    # Configuration
+    grid_size = 5000
+    obstacle_density = 0.34
+    num_trials = 5
+    core_configs = [1, 2, 4, 8, 12]
+
+    print(
+        f"Starting Strong Scaling Benchmark: {grid_size}x{grid_size} | {num_trials} Trials | {obstacle_density * 100}% Density")
+
+    # Static grid for all tests to ensure fairness
+    grid = create_random_grid(grid_size, grid_size, obstacle_density)
+    start, goal = (0, 0), (grid_size - 1, grid_size - 1)
+    grid[start], grid[goal] = 0, 0
+
+    results = {
+        'cores': core_configs,
+        'Strategy 1: Batch': [],
+        'Strategy 2: Bidirectional': [],
+        'Strategy 3: Region': []
+    }
+
+    for p in core_configs:
+        print(f"\n--- Testing with {p} Cores ---")
+
+        trial_times_s1 = []
+        trial_times_s2 = []
+        trial_times_s3 = []
+
+        for t in range(num_trials):
+            print(f"  Trial {t + 1}/{num_trials}...", end="\r")
+
+            # Strategy 1: Batch (Average of 4 paths)
+            t_start = time.perf_counter()
+            jobs = [(grid, start, goal)] * 4
+            # Note: Ensure your batch_process_paths is modified to accept a 'p' parameter if needed
+            batch_process_paths(jobs)
+            trial_times_s1.append((time.perf_counter() - t_start) / 4)
+
+            # Strategy 2: Bidirectional
+            t_start = time.perf_counter()
+            run_bidirectional_parallel(grid, start, goal)
+            trial_times_s2.append(time.perf_counter() - t_start)
+
+            # Strategy 3: Region
+            t_start = time.perf_counter()
+            # Splits often scale with core count for better efficiency
+            run_region_parallel(grid, start, goal, splits=max(2, p))
+            trial_times_s3.append(time.perf_counter() - t_start)
+
+        # Record averages for this core count
+        results['Strategy 1: Batch'].append(np.mean(trial_times_s1))
+        results['Strategy 2: Bidirectional'].append(np.mean(trial_times_s2))
+        results['Strategy 3: Region'].append(np.mean(trial_times_s3))
+
+        print(
+            f"  Done. Avg Times -> S1: {results['Strategy 1: Batch'][-1]:.2f}s | S2: {results['Strategy 2: Bidirectional'][-1]:.2f}s | S3: {results['Strategy 3: Region'][-1]:.2f}s")
+
+    # Plotting
+
+    plt.figure(figsize=(10, 6))
+    for strategy in ['Strategy 1: Batch', 'Strategy 2: Bidirectional', 'Strategy 3: Region']:
+        plt.plot(core_configs, results[strategy], marker='o', linewidth=2, label=strategy)
+
+    plt.title(f'Strong Scaling: Execution Time vs CPU Cores (Fixed {grid_size}x{grid_size})')
+    plt.xlabel('Number of CPU Cores')
+    plt.ylabel('Average Execution Time (Seconds)')
+    plt.xticks(core_configs)
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.show()
+
+
 def run_parallel_profile_mode():
     profiler = ParallelProfiler()
     print("\nSelect profiling mode:")
-    print("  1: Comprehensive Profile (with Charts)")
+    print("  1: Comprehensive Profile")
     print("  2: Quick Profile (Single grid size)")
-    print("  3: Scalability Analysis (with Charts)")
-    print("  4: Lock Contention Analysis")
+    print("  3: Scalability Analysis With Problem Size")
+    print("  4: Scalability Analysis With CPU Cores")
+    print("  5: Lock Contention Analysis")
 
-    choice = input("\nEnter choice (1-4): ").strip()
+    choice = input("\nEnter choice (1-5): ").strip()
 
     if choice == '1':
         profiler.run_comprehensive_profile(grid_size=500)
@@ -441,6 +525,8 @@ def run_parallel_profile_mode():
         custom_sizes = [500, 1000, 2500, 5000]
         profiler.analyze_scalability(size_list=custom_sizes)
     elif choice == '4':
+        benchmark_parallel_scaling()
+    elif choice == '5':
         grid_size = 300
         grid = create_random_grid(grid_size, grid_size, 0.3)
         start, goal = (0, 0), (grid_size - 1, grid_size - 1)
