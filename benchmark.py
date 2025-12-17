@@ -1,6 +1,7 @@
 import time
 import numpy as np
 import multiprocessing as mp
+import matplotlib.pyplot as plt  # Added for plotting
 from Parallel.strategy_1_batch import batch_process_paths
 from Parallel.strategy_2_bidirectional import run_bidirectional_parallel
 from Parallel.strategy_3_region import run_region_parallel
@@ -19,8 +20,76 @@ def create_random_grid(size, density):
     return (np.random.random((size, size)) < density).astype(np.int8)
 
 
+def generate_benchmark_plots(results, grid_sizes):
+
+    # Extract data for plotting
+    seq_times = [results[size]["Sequential"]['mean'] for size in grid_sizes]
+    batch_times = [results[size]["Strategy 1: Batch"]['mean'] for size in grid_sizes]
+    bi_times = [results[size]["Strategy 2: Bidirectional"]['mean'] for size in grid_sizes]
+    reg_times = [results[size]["Strategy 3: Region-Based"]['mean'] for size in grid_sizes]
+
+    # Calculate Speedups
+    batch_speedup = [seq / batch if batch > 0 else 0 for seq, batch in zip(seq_times, batch_times)]
+    bi_speedup = [seq / bi if bi > 0 else 0 for seq, bi in zip(seq_times, bi_times)]
+    reg_speedup = [seq / reg if reg > 0 else 0 for seq, reg in zip(seq_times, reg_times)]
+
+    # --- PLOT 1: Scalability (Execution Time vs Grid Size) ---
+    plt.figure(figsize=(10, 6))
+    plt.plot(grid_sizes, seq_times, marker='o', color='red', label='Sequential', linewidth=2)
+    plt.plot(grid_sizes, bi_times, marker='^', color='green', label='Bidirectional', linewidth=2)
+    plt.plot(grid_sizes, reg_times, marker='s', color='blue', label='Region-Based', linewidth=2)
+    plt.plot(grid_sizes, batch_times, marker='x', color='orange', linestyle='--', label='Batch (Avg/Path)', linewidth=2)
+
+    plt.yscale('log')  # Log scale is essential because Sequential grows exponentially
+    plt.title('Scalability Analysis: Execution Time vs Grid Size (Log Scale)')
+    plt.xlabel('Grid Size (NxN)')
+    plt.ylabel('Time (Seconds)')
+    plt.grid(True, which="both", ls="-", alpha=0.5)
+    plt.legend()
+
+    # --- PLOT 2: Speedup Factor vs Grid Size ---
+    plt.figure(figsize=(10, 6))
+    plt.plot(grid_sizes, bi_speedup, marker='^', color='green', label='Bidirectional Speedup')
+    plt.plot(grid_sizes, reg_speedup, marker='s', color='blue', label='Region-Based Speedup')
+    plt.plot(grid_sizes, batch_speedup, marker='x', color='orange', label='Batch Speedup')
+    plt.axhline(y=1, color='red', linestyle='--', label='Baseline (1x)')
+
+    plt.title('Parallel Speedup Factor vs Grid Size')
+    plt.xlabel('Grid Size (NxN)')
+    plt.ylabel('Speedup (x Times Faster)')
+    plt.grid(True)
+    plt.legend()
+
+
+    # --- PLOT 3: The "Hero" Bar Chart (Largest Grid Only) ---
+    max_size = grid_sizes[-1]
+    labels = ['Sequential', 'Batch', 'Bidirectional', 'Region-Based']
+    times_max = [
+        results[max_size]["Sequential"]['mean'],
+        results[max_size]["Strategy 1: Batch"]['mean'],
+        results[max_size]["Strategy 2: Bidirectional"]['mean'],
+        results[max_size]["Strategy 3: Region-Based"]['mean']
+    ]
+    colors = ['#ff9999', '#ffcc99', '#99ff99', '#66b3ff']
+
+    plt.figure(figsize=(10, 6))
+    bars = plt.bar(labels, times_max, color=colors, edgecolor='black')
+
+    # Add value labels on top
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width() / 2., height,
+                 f'{height:.2f}s', ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+    plt.title(f'Performance Comparison on Largest Grid ({max_size}x{max_size})')
+    plt.ylabel('Execution Time (Seconds)')
+    plt.grid(axis='y', linestyle='--', alpha=0.5)
+
+    plt.show()
+
+
 def run_benchmark():
-    WIDTH = 130  # Increased width for the new column
+    WIDTH = 130
 
     print("=" * WIDTH)
     print(f"{'COMPREHENSIVE A* BENCHMARK':^{WIDTH}}")
@@ -57,7 +126,7 @@ def run_benchmark():
             print(f"--- Testing: {name} ---")
 
             times = []
-            steps_list = []  # Store path lengths
+            steps_list = []
             success_count = 0
 
             for t in range(NUM_TRIALS):
@@ -83,9 +152,7 @@ def run_benchmark():
                     avg_time_per_path = total_batch_time / current_batch
                     times.append(avg_time_per_path)
 
-                    # Calculate average steps for this batch
                     if batch_results:
-                        # batch_results is a list of paths (lists)
                         avg_batch_steps = np.mean([len(p) for p in batch_results if p])
                         steps_list.append(avg_batch_steps)
                         success_count += 1
@@ -139,35 +206,35 @@ def run_benchmark():
                 'success': (success_count / NUM_TRIALS) * 100
             }
 
-    # ================= REPORT GENERATION =================
-    print("\n" + "=" * 130)
-    print(f"{'FINAL BENCHMARK REPORT':^130}")
-    print("=" * 130)
-    # Added "Avg Steps" column
-    print(f"{'Grid':<10} | {'Strategy':<30} | {'Time/Path':<15} | {'Speedup':<10} | {'Efficiency':<12} | {'Avg Steps':<10}")
-    print("-" * 130)
+    print("\n" + "=" * 140)
+    print(f"{'FINAL BENCHMARK REPORT':^140}")
+    print("=" * 140)
+    print(
+        f"{'Grid':<10} | {'Strategy':<30} | {'Time/Path':<15} | {'Speedup':<12} | {'Efficiency':<12} | {'Avg Steps':<10}")
+    print("-" * 140)
 
     for size in GRID_SIZES:
         baseline = results[size]["Sequential"]['mean']
         baseline_steps = results[size]["Sequential"]['mean_steps']
 
-        # 1. Print Baseline
-        print(f"{size:<10} | {'Sequential (Baseline)':<30} | {baseline:.5f}s      | {'1.00x':<10} | {'-':<12} | {baseline_steps:.1f}")
+        print(
+            f"{size:<10} | {'Sequential (Baseline)':<30} | {baseline:>13.5f}s | {'1.00x':<12} | {'-':<12} | {baseline_steps:>10.1f}")
 
-        # 2. Print Others
         for name in strategies.keys():
-            if name == "Sequential": continue
+            if name == "Sequential":
+                continue
 
             res = results[size][name]
             speedup = baseline / res['mean'] if res['mean'] > 0 else 0
             eff = (speedup / NUM_CORES) * 100
 
-            print(f"{'':<10} | {name:<30} | {res['mean']:.5f}s      | {speedup:<9.2f}x | {eff:<9.1f}%   | {res['mean_steps']:.1f}")
+            print(
+                f"{'':<10} | {name:<30} | {res['mean']:>13.5f}s | {speedup:>11.2f}x | {eff:>11.1f}% | {res['mean_steps']:>10.1f}")
 
-        print("-" * 130)
+        print("-" * 140)
 
-    print("\nNOTE: For 'Batch Processing', Speedup is calculated based on throughput.")
-    print(f"      (Sequential Time per Path vs. Parallel Batch Time per Path)")
+    generate_benchmark_plots(results, GRID_SIZES)
+    plt.show()
 
 
 if __name__ == "__main__":
